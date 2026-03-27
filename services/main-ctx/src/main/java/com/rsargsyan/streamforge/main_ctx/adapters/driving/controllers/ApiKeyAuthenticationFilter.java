@@ -1,0 +1,43 @@
+package com.rsargsyan.streamforge.main_ctx.adapters.driving.controllers;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+
+public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
+  private final AuthenticationManager authManager;
+
+  public ApiKeyAuthenticationFilter(AuthenticationManager authenticationManager) {
+    authManager = authenticationManager;
+  }
+
+  @Override
+  protected void doFilterInternal(
+      HttpServletRequest request,
+      HttpServletResponse response,
+      FilterChain filterChain)
+      throws ServletException, IOException {
+    String apiKey = request.getHeader("X-API-KEY");
+    String apiKeyId = request.getHeader("X-API-KEY-ID");
+
+    if (apiKeyId != null && apiKey != null) {
+      try {
+        SecurityContextHolder.getContext()
+            .setAuthentication(authManager.authenticate(new CustomApiKey(apiKeyId, apiKey)));
+      } catch (AuthenticationException e) {
+        response.setStatus(HttpStatus.UNAUTHORIZED.value());
+        return;
+      }
+    }
+
+    filterChain.doFilter(request, response);
+  }
+}
