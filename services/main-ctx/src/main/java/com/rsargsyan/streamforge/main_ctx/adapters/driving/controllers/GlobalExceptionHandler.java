@@ -2,11 +2,13 @@ package com.rsargsyan.streamforge.main_ctx.adapters.driving.controllers;
 
 import com.rsargsyan.streamforge.main_ctx.core.exception.AuthorizationException;
 import com.rsargsyan.streamforge.main_ctx.core.exception.DomainException;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+@Profile("web")
 @RestControllerAdvice
 public class GlobalExceptionHandler {
   public record ErrorResponse(String code, String message) {}

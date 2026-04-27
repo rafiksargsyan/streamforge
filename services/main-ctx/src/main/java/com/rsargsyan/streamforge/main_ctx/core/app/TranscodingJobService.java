@@ -74,7 +74,7 @@ public class TranscodingJobService {
       TranscodingJobRepository transcodingJobRepository,
       ApplicationEventPublisher applicationEventPublisher,
       AccountRepository accountRepository,
-      S3Presigner s3Presigner,
+      @Autowired(required = false) S3Presigner s3Presigner,
       Config config,
       TransactionTemplate transactionTemplate,
       RabbitTemplate rabbitTemplate

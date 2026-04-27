@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -76,6 +77,7 @@ public class Config {
   @Value("${job.poll-interval-seconds:5}")
   public int pollIntervalSeconds;
 
+  @Profile("worker")
   @Bean
   public S3Client s3Client() {
     return S3Client.builder()
@@ -102,6 +104,7 @@ public class Config {
     return template;
   }
 
+  @Profile("web")
   @Bean(destroyMethod = "close")
   public S3Presigner s3Presigner() {
     return S3Presigner.builder()

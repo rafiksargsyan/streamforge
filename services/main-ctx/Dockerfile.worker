@@ -1,0 +1,17 @@
+FROM eclipse-temurin:21-jre-noble
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget -q -O /usr/local/bin/packager \
+    https://github.com/shaka-project/shaka-packager/releases/latest/download/packager-linux-x64 \
+    && chmod +x /usr/local/bin/packager
+
+WORKDIR /app
+COPY build/libs/*.jar app.jar
+
+ENV SPRING_PROFILES_ACTIVE=worker
+
+ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -3,6 +3,8 @@ package com.rsargsyan.streamforge.main_ctx.adapters.driving.controllers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -16,17 +18,21 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
+@Profile("web")
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
   private final AuthenticationConfiguration authConfig;
   private final CustomApiKeyAuthenticationProvider apiKeyAuthenticationProvider;
+  private final List<String> allowedOrigins;
 
   @Autowired
   public SecurityConfig(AuthenticationConfiguration authConfig,
-                        CustomApiKeyAuthenticationProvider apiKeyAuthenticationProvider) {
+                        CustomApiKeyAuthenticationProvider apiKeyAuthenticationProvider,
+                        @Value("${cors.allowed-origins}") List<String> allowedOrigins) {
     this.authConfig = authConfig;
     this.apiKeyAuthenticationProvider = apiKeyAuthenticationProvider;
+    this.allowedOrigins = allowedOrigins;
   }
 
   @Bean
@@ -47,7 +53,7 @@ public class SecurityConfig {
   @Bean
   public CorsConfigurationSource corsConfigurationSource() {
     CorsConfiguration config = new CorsConfiguration();
-    config.setAllowedOrigins(List.of("http://localhost:5173"));
+    config.setAllowedOrigins(allowedOrigins);
     config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
     config.setAllowedHeaders(List.of("*"));
     config.setAllowCredentials(true);
