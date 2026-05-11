@@ -40,3 +40,27 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+tasks.register('dockerBuildBackend', Exec) {
+	commandLine 'sh', '-c', 'docker build -t rsargsyan/streamforge-backend:latest -f Dockerfile .'
+}
+
+tasks.register('dockerBuildWorker', Exec) {
+	commandLine 'sh', '-c', 'docker build -t rsargsyan/streamforge-worker:latest -f Dockerfile.worker .'
+}
+
+tasks.register('dockerPushBackend', Exec) {
+	commandLine 'sh', '-c', 'docker push rsargsyan/streamforge-backend:latest'
+}
+
+tasks.register('dockerPushWorker', Exec) {
+	commandLine 'sh', '-c', 'docker push rsargsyan/streamforge-worker:latest'
+}
+
+tasks.register('dockerPublish') {
+	dependsOn 'build', 'dockerBuildBackend', 'dockerBuildWorker', 'dockerPushBackend', 'dockerPushWorker'
+	tasks.findByName('dockerBuildBackend').mustRunAfter('build')
+	tasks.findByName('dockerBuildWorker').mustRunAfter('build')
+	tasks.findByName('dockerPushBackend').mustRunAfter('dockerBuildBackend')
+	tasks.findByName('dockerPushWorker').mustRunAfter('dockerBuildWorker')
+}

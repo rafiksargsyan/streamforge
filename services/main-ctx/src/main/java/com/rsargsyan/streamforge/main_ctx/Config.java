@@ -3,6 +3,10 @@ package com.rsargsyan.streamforge.main_ctx;
 import com.rsargsyan.streamforge.main_ctx.core.ports.repository.TranscodingJobRepository;
 import io.hypersistence.tsid.TSID;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +18,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.net.URI;
@@ -77,6 +82,21 @@ public class Config {
   @Value("${job.poll-interval-seconds:5}")
   public int pollIntervalSeconds;
 
+  @Bean
+  public Queue queue() {
+    return new Queue(queueName, true);
+  }
+
+  @Bean
+  public TopicExchange exchange() {
+    return new TopicExchange(topicExchangeName);
+  }
+
+  @Bean
+  public Binding binding(Queue queue, TopicExchange exchange) {
+    return BindingBuilder.bind(queue).to(exchange).with(routingKey);
+  }
+
   @Profile("worker")
   @Bean
   public S3Client s3Client() {
@@ -85,6 +105,7 @@ public class Config {
         .region(Region.of(s3Region))
         .credentialsProvider(StaticCredentialsProvider.create(
             AwsBasicCredentials.create(s3AccessKeyId, s3SecretAccessKey)))
+        .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
         .build();
   }
 
@@ -112,6 +133,7 @@ public class Config {
         .region(Region.of(s3Region))
         .credentialsProvider(StaticCredentialsProvider.create(
             AwsBasicCredentials.create(s3AccessKeyId, s3SecretAccessKey)))
+        .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
         .build();
   }
 }
