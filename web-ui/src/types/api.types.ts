@@ -70,8 +70,7 @@ export interface TranscodingJobDTO {
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
-  dashManifestUrl?: string;
-  hlsManifestUrl?: string;
+  downloadUrl?: string;
   failureReason?: string;
 }
 

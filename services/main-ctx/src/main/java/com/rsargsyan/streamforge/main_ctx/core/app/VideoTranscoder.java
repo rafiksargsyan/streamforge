@@ -86,16 +86,18 @@ public class VideoTranscoder {
                                      boolean hdr, Path outputPath, int threads,
                                      Consumer<Process> onProcess) throws Exception {
     int resolution = rendition.resolution();
-    String level, profile, maxRate, bufSize;
+    String level, profile, maxRate, bufSize, preset;
     int crf;
     if (resolution <= 360) {
-      level = "3.0"; profile = "baseline"; crf = 18; maxRate = "600k"; bufSize = "1200k";
+      level = "3.0"; profile = "baseline"; crf = 18; maxRate = "600k";   bufSize = "1200k";  preset = "veryslow";
     } else if (resolution <= 480) {
-      level = "3.1"; profile = "main"; crf = 18; maxRate = "1200k"; bufSize = "2400k";
+      level = "3.1"; profile = "main";     crf = 18; maxRate = "1200k";  bufSize = "2400k";  preset = "veryslow";
     } else if (resolution <= 720) {
-      level = "4.0"; profile = "main"; crf = 18; maxRate = "3000k"; bufSize = "6000k";
+      level = "4.0"; profile = "main";     crf = 18; maxRate = "3000k";  bufSize = "6000k";  preset = "slow";
+    } else if (resolution <= 1080) {
+      level = "4.2"; profile = "high";     crf = 19; maxRate = "5000k";  bufSize = "10000k"; preset = "medium";
     } else {
-      level = "4.2"; profile = "high"; crf = 19; maxRate = "5000k"; bufSize = "10000k";
+      level = "5.1"; profile = "high";     crf = 19; maxRate = "20000k"; bufSize = "40000k"; preset = "medium";
     }
 
     String vf = "scale=-2:%d,format=yuv420p".formatted(resolution);
@@ -116,7 +118,7 @@ public class VideoTranscoder {
         "-crf", String.valueOf(crf),
         "-maxrate", maxRate,
         "-bufsize", bufSize,
-        "-preset", "veryslow",
+        "-preset", preset,
         "-tune", "film",
         "-vf", vf,
         "-threads", String.valueOf(threads),

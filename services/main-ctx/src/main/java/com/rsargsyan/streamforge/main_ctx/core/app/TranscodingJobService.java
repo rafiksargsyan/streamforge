@@ -34,11 +34,16 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -125,14 +130,14 @@ public class TranscodingJobService {
   public Page<TranscodingJobDTO> findAll(String accountId, int page, int size) {
     var pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
     return transcodingJobRepository.findByAccountId(Util.validateTSID(accountId), pageable)
-        .map(job -> TranscodingJobDTO.from(job, dashManifestUrl(job), hlsManifestUrl(job)));
+        .map(job -> TranscodingJobDTO.from(job, downloadUrl(job)));
   }
 
   public TranscodingJobDTO findById(String accountId, String jobId) {
     var job = transcodingJobRepository
         .findByAccountIdAndId(Util.validateTSID(accountId), Util.validateTSID(jobId))
         .orElseThrow(ResourceNotFoundException::new);
-    return TranscodingJobDTO.from(job, dashManifestUrl(job), hlsManifestUrl(job));
+    return TranscodingJobDTO.from(job, downloadUrl(job));
   }
 
   public long getMaxFileSizeBytes() {
@@ -156,7 +161,7 @@ public class TranscodingJobService {
     var job = new TranscodingJob(account, dto.getVideoURL(), dto.getSpec());
     transcodingJobRepository.save(job);
     applicationEventPublisher.publishEvent(new TranscodingJobCreatedEvent(job.getId()));
-    return TranscodingJobDTO.from(job, null, null);
+    return TranscodingJobDTO.from(job, null);
   }
 
   @Transactional
@@ -221,6 +226,7 @@ public class TranscodingJobService {
     ScheduledFuture<?> heartbeat = activeHeartbeats.get(jobId);
     Path jobFolder = null;
     Path videoFile = null;
+    Path zipFile = null;
     final String strId = TSID.from(jobId).toString();
 
     try {
@@ -256,10 +262,12 @@ public class TranscodingJobService {
       }
       log.info("[{}] Transcoding: {}s", strId, elapsed(transcodeT));
 
-      log.info("[{}] Uploading output to S3", strId);
+      log.info("[{}] Zipping and uploading output to S3", strId);
       long uploadT = System.nanoTime();
       try {
-        awsS3Upload(jobFolder, strId + "/", true);
+        zipFile = jobFolder.getParent().resolve(attemptKey + ".zip");
+        zipDirectory(jobFolder.resolve("vod"), zipFile);
+        awsS3Upload(zipFile, strId + ".zip", false);
       } catch (Exception e) {
         throw new JobFailureException(FailureReason.UPLOAD_FAILED, e);
       }
@@ -309,6 +317,7 @@ public class TranscodingJobService {
       if (heartbeat != null) heartbeat.cancel(false);
       if (jobFolder != null) deleteRecursively(jobFolder);
       try { if (videoFile != null) Files.deleteIfExists(videoFile); } catch (IOException ignored) {}
+      try { if (zipFile != null) Files.deleteIfExists(zipFile); } catch (IOException ignored) {}
     }
   }
 
@@ -423,15 +432,7 @@ public class TranscodingJobService {
     }
   }
 
-  private String dashManifestUrl(TranscodingJob job) {
-    return presignedUrl(job, "vod/manifest.mpd");
-  }
-
-  private String hlsManifestUrl(TranscodingJob job) {
-    return presignedUrl(job, "vod/master.m3u8");
-  }
-
-  private String presignedUrl(TranscodingJob job, String filename) {
+  private String downloadUrl(TranscodingJob job) {
     if (job.getStatus() != TranscodingJob.Status.SUCCESS) return null;
     Instant expiry = job.getFinishedAt().plus(Duration.ofHours(config.outputUrlTtlHours));
     Instant now = Instant.now();
@@ -440,10 +441,24 @@ public class TranscodingJobService {
         .signatureDuration(Duration.between(now, expiry))
         .getObjectRequest(GetObjectRequest.builder()
             .bucket(config.s3Bucket)
-            .key(job.getStrId() + "/" + filename)
+            .key(job.getStrId() + ".zip")
             .build())
         .build();
     return s3Presigner.presignGetObject(presignRequest).url().toString();
+  }
+
+  private static void zipDirectory(Path source, Path target) throws IOException {
+    try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(target))) {
+      Files.walkFileTree(source, new SimpleFileVisitor<>() {
+        @Override
+        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+          zos.putNextEntry(new ZipEntry(source.relativize(file).toString()));
+          Files.copy(file, zos);
+          zos.closeEntry();
+          return FileVisitResult.CONTINUE;
+        }
+      });
+    }
   }
 
   private static boolean isNetworkReachable() {

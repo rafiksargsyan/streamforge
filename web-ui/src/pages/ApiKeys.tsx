@@ -143,6 +143,7 @@ export function ApiKeys() {
           <Table size="small">
             <TableHead>
               <TableRow>
+                <TableCell>ID</TableCell>
                 <TableCell>Description</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Created</TableCell>
@@ -153,7 +154,7 @@ export function ApiKeys() {
             <TableBody>
               {apiKeys.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} align="center">
+                  <TableCell colSpan={6} align="center">
                     <Typography variant="body2" color="text.secondary" py={2}>
                       No API keys yet.
                     </Typography>
@@ -162,6 +163,7 @@ export function ApiKeys() {
               )}
               {apiKeys.map((key) => (
                 <TableRow key={key.id}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{key.id}</TableCell>
                   <TableCell>{key.description}</TableCell>
                   <TableCell>
                     <Chip

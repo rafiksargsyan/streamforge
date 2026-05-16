@@ -17,18 +17,17 @@ public class TranscodingJobDTO {
   Instant createdAt;
   Instant startedAt;
   Instant finishedAt;
-  @Nullable String dashManifestUrl;
-  @Nullable String hlsManifestUrl;
+  @Nullable String downloadUrl;
   @Nullable JobFailureReason failureReason;
 
-  public static TranscodingJobDTO from(TranscodingJob job, String dashManifestUrl, String hlsManifestUrl) {
+  public static TranscodingJobDTO from(TranscodingJob job, String downloadUrl) {
     JobFailureReason failureReason = job.getFailureReason() != null
         ? JobFailureReason.from(job.getFailureReason())
         : null;
     return new TranscodingJobDTO(
         job.getStrId(), job.getVideoURL(), externalStatus(job), job.getSpec(),
         job.getCreatedAt(), job.getStartedAt(), job.getFinishedAt(),
-        dashManifestUrl, hlsManifestUrl, failureReason
+        downloadUrl, failureReason
     );
   }
 

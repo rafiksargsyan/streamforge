@@ -255,35 +255,19 @@ export function Jobs() {
                     </TableCell>
                     <TableCell>{new Date(job.createdAt).toLocaleString()}</TableCell>
                     <TableCell>
-                      <Stack direction="row" spacing={0.5}>
-                        {job.dashManifestUrl && (
-                          <Tooltip title="DASH manifest">
-                            <IconButton
-                              size="small"
-                              component="a"
-                              href={job.dashManifestUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <LinkIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        )}
-                        {job.hlsManifestUrl && (
-                          <Tooltip title="HLS manifest">
-                            <IconButton
-                              size="small"
-                              component="a"
-                              href={job.hlsManifestUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              color="secondary"
-                            >
-                              <LinkIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        )}
-                      </Stack>
+                      {job.downloadUrl && (
+                        <Tooltip title="Download output ZIP">
+                          <IconButton
+                            size="small"
+                            component="a"
+                            href={job.downloadUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <LinkIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </TableCell>
                     <TableCell align="right">
                       {!TERMINAL.includes(job.status) && (
