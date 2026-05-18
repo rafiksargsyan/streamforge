@@ -20,7 +20,7 @@ import java.time.Instant;
 @Getter
 public class TranscodingJob extends AccountScopedAggregateRoot {
 
-  @Column(name = "url")
+  @Column(name = "url", columnDefinition = "text")
   private URL videoURL;
 
   @Enumerated(EnumType.STRING)

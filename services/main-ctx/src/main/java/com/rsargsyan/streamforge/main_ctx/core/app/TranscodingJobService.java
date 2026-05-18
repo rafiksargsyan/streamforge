@@ -372,18 +372,25 @@ public class TranscodingJobService {
           .connectTimeout(Duration.ofSeconds(15))
           .build();
       var request = HttpRequest.newBuilder()
-          .method("HEAD", HttpRequest.BodyPublishers.noBody())
+          .GET()
           .uri(URI.create(videoUrl))
+          .header("Range", "bytes=0-0")
           .timeout(Duration.ofSeconds(30))
           .build();
       var response = client.send(request, HttpResponse.BodyHandlers.discarding());
       int status = response.statusCode();
-      if (status >= 400 && status != 405) {
+      if (status >= 400) {
         throw new VideoNotAccessibleException("Video returned HTTP " + status + ": " + videoUrl);
       }
-      response.headers().firstValueAsLong("content-length").ifPresent(size -> {
-        if (size > config.maxVideoFileSizeBytes) {
-          throw new VideoFileTooLargeException(size, config.maxVideoFileSizeBytes);
+      response.headers().firstValue("content-range").ifPresent(cr -> {
+        int slash = cr.lastIndexOf('/');
+        if (slash >= 0) {
+          try {
+            long totalSize = Long.parseLong(cr.substring(slash + 1));
+            if (totalSize > config.maxVideoFileSizeBytes) {
+              throw new VideoFileTooLargeException(totalSize, config.maxVideoFileSizeBytes);
+            }
+          } catch (NumberFormatException ignored) {}
         }
       });
     } catch (VideoNotAccessibleException | VideoFileTooLargeException e) {

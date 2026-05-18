@@ -50,7 +50,7 @@ public class VideoTranscoder {
     // 3. Process subtitle tracks (WebVTT)
     for (TextTranscodeSpec textSpec : spec.texts()) {
       Path subtitleWorkPath = workDir.resolve(textSpec.fileName());
-      transcodeSubtitle(textSpec, subtitleWorkPath, onProcess);
+      transcodeSubtitle(textSpec, inputPath, subtitleWorkPath, onProcess);
       appendDummyCue(subtitleWorkPath);
       Files.copy(subtitleWorkPath, subtitlesDir.resolve(textSpec.fileName()),
           java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -142,11 +142,13 @@ public class VideoTranscoder {
     runProcess(cmd, null, onProcess);
   }
 
-  private static void transcodeSubtitle(TextTranscodeSpec spec, Path outputPath,
+  private static void transcodeSubtitle(TextTranscodeSpec spec, String inputPath, Path outputPath,
                                         Consumer<Process> onProcess) throws Exception {
     List<String> cmd = List.of(
         "ffmpeg", "-y",
-        "-i", spec.src(),
+        "-i", inputPath,
+        "-vn", "-an",
+        "-map", "0:" + spec.stream(),
         "-codec:s", "webvtt",
         outputPath.toString()
     );

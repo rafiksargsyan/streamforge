@@ -171,7 +171,7 @@ export function Jobs() {
 
   // Text helpers
   const addText = () =>
-    setTexts((t) => [...t, { lang: 'EN', name: '', fileName: '', src: '' }]);
+    setTexts((t) => [...t, { lang: 'EN', name: '', fileName: '', stream: 0 }]);
   const updateText = <K extends keyof TextTranscodeSpec>(
     i: number,
     field: K,
@@ -448,11 +448,12 @@ export function Jobs() {
                   sx={{ flex: 1 }}
                 />
                 <TextField
-                  label="Subtitle URL"
+                  label="Stream index"
                   size="small"
-                  value={t.src}
-                  onChange={(e) => updateText(i, 'src', e.target.value)}
-                  sx={{ flex: 2 }}
+                  type="number"
+                  value={t.stream}
+                  onChange={(e) => updateText(i, 'stream', Number(e.target.value))}
+                  sx={{ width: 120 }}
                 />
                 <IconButton size="small" onClick={() => removeText(i)}>
                   <DeleteIcon fontSize="small" />

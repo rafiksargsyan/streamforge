@@ -43,7 +43,7 @@ export interface TextTranscodeSpec {
   lang: Lang;
   name: string;
   fileName: string;
-  src: string;
+  stream: number;
 }
 
 export interface TranscodeSpec {
