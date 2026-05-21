@@ -30,10 +30,11 @@ public class VideoTranscoder {
     boolean hdr = isHdr(inputPath);
     List<String> shakaInputs = new ArrayList<>();
 
-    // 1. Transcode video renditions (H.264, profile-based)
+    // 1. Transcode all video renditions in a single ffmpeg pass
+    transcodeAllVideoRenditions(inputPath, spec.video().stream(), spec.video().renditions(),
+        hdr, workDir, ffmpegThreads, onProcess);
     for (VideoRendition rendition : spec.video().renditions()) {
       Path renditionPath = workDir.resolve(rendition.fileName());
-      transcodeVideo(inputPath, spec.video().stream(), rendition, hdr, renditionPath, ffmpegThreads, onProcess);
       shakaInputs.add("in=%s,stream=video,output=%s".formatted(renditionPath, rendition.fileName()));
     }
 
@@ -82,48 +83,72 @@ public class VideoTranscoder {
     }
   }
 
-  private static void transcodeVideo(String inputPath, int stream, VideoRendition rendition,
-                                     boolean hdr, Path outputPath, int threads,
-                                     Consumer<Process> onProcess) throws Exception {
-    int resolution = rendition.resolution();
-    String level, profile, maxRate, bufSize, preset;
-    int crf;
-    if (resolution <= 360) {
-      level = "3.0"; profile = "baseline"; crf = 18; maxRate = "600k";   bufSize = "1200k";  preset = "veryslow";
-    } else if (resolution <= 480) {
-      level = "3.1"; profile = "main";     crf = 18; maxRate = "1200k";  bufSize = "2400k";  preset = "veryslow";
-    } else if (resolution <= 720) {
-      level = "4.0"; profile = "main";     crf = 18; maxRate = "3000k";  bufSize = "6000k";  preset = "slow";
-    } else if (resolution <= 1080) {
-      level = "4.2"; profile = "high";     crf = 19; maxRate = "5000k";  bufSize = "10000k"; preset = "medium";
-    } else {
-      level = "5.1"; profile = "high";     crf = 19; maxRate = "20000k"; bufSize = "40000k"; preset = "medium";
-    }
+  private static void transcodeAllVideoRenditions(String inputPath, int stream,
+                                                   List<VideoRendition> renditions,
+                                                   boolean hdr, Path workDir,
+                                                   int ffmpegThreads,
+                                                   Consumer<Process> onProcess) throws Exception {
+    int n = renditions.size();
+    int encoderThreads = Math.max(3, (ffmpegThreads - 1) / n);
 
-    String vf = "scale=-2:%d,format=yuv420p".formatted(resolution);
+    List<String> cmd = new ArrayList<>();
+    cmd.addAll(List.of("ffmpeg", "-y", "-threads", "1", "-i", inputPath));
+
+    // Build filter_complex: optionally tonemap (HDR), then split and scale per rendition
+    StringBuilder fc = new StringBuilder();
     if (hdr) {
-      vf = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709," +
-           "tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv," + vf;
+      fc.append("[0:v:").append(stream).append("]")
+        .append("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,")
+        .append("tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv[sdr_base];")
+        .append("[sdr_base]");
+    } else {
+      fc.append("[0:v:").append(stream).append("]");
+    }
+    fc.append("split=").append(n);
+    for (int i = 0; i < n; i++) fc.append("[v").append(i).append("]");
+    for (int i = 0; i < n; i++) {
+      fc.append(";[v").append(i).append("]")
+        .append("scale=-2:").append(renditions.get(i).resolution())
+        .append(",format=yuv420p[out").append(i).append("]");
     }
 
-    List<String> cmd = List.of(
-        "ffmpeg", "-y",
-        "-i", inputPath,
-        "-an", "-sn",
-        "-c:v:" + stream, "libx264",
-        "-profile:v", profile,
-        "-level:v", level,
-        "-x264opts", "keyint=120:min-keyint=120:no-scenecut:open_gop=0",
-        "-map_chapters", "-1",
-        "-crf", String.valueOf(crf),
-        "-maxrate", maxRate,
-        "-bufsize", bufSize,
-        "-preset", preset,
-        "-tune", "film",
-        "-vf", vf,
-        "-threads", String.valueOf(threads),
-        outputPath.toString()
-    );
+    cmd.addAll(List.of("-filter_complex", fc.toString()));
+
+    // Per-rendition output: map filtered stream, set codec/quality params, control threads via x264opts
+    for (int i = 0; i < n; i++) {
+      VideoRendition rendition = renditions.get(i);
+      int resolution = rendition.resolution();
+      String level, profile, maxRate, bufSize, preset;
+      int crf;
+      if (resolution <= 360) {
+        level = "3.0"; profile = "baseline"; crf = 18; maxRate = "600k";   bufSize = "1200k";  preset = "fast";
+      } else if (resolution <= 480) {
+        level = "3.1"; profile = "main";     crf = 18; maxRate = "1200k";  bufSize = "2400k";  preset = "fast";
+      } else if (resolution <= 720) {
+        level = "4.0"; profile = "main";     crf = 18; maxRate = "3000k";  bufSize = "6000k";  preset = "medium";
+      } else if (resolution <= 1080) {
+        level = "4.2"; profile = "high";     crf = 19; maxRate = "5000k";  bufSize = "10000k"; preset = "slow";
+      } else {
+        level = "5.1"; profile = "high";     crf = 19; maxRate = "20000k"; bufSize = "40000k"; preset = "slow";
+      }
+
+      cmd.addAll(List.of(
+          "-map", "[out" + i + "]",
+          "-an", "-sn",
+          "-c:v", "libx264",
+          "-profile:v", profile,
+          "-level:v", level,
+          "-x264opts", "keyint=120:min-keyint=120:no-scenecut:open_gop=0:threads=" + encoderThreads,
+          "-map_chapters", "-1",
+          "-crf", String.valueOf(crf),
+          "-maxrate", maxRate,
+          "-bufsize", bufSize,
+          "-preset", preset,
+          "-tune", "film",
+          workDir.resolve(rendition.fileName()).toString()
+      ));
+    }
+
     runProcess(cmd, null, onProcess);
   }
 
