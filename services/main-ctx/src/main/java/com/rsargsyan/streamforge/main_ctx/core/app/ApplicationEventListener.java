@@ -13,7 +13,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 @Slf4j
-@Profile("web")
+@Profile({"web", "worker"})
 @Component
 public class ApplicationEventListener {
 
