@@ -45,8 +45,10 @@ public class TranscodingJobWorker {
   private void pollLoop() {
     long pollIntervalMillis = TimeUnit.SECONDS.toMillis(config.pollIntervalSeconds);
     while (running) {
+      boolean slotAcquired = false;
       try {
         transcodingJobService.acquireSlot();
+        slotAcquired = true;
 
         Boolean received = rabbitTemplate.execute(channel -> {
           GetResponse response = channel.basicGet(config.queueName, false);
@@ -74,6 +76,8 @@ public class TranscodingJobWorker {
         }
       } catch (Exception e) {
         log.error("Unexpected error in poll loop", e);
+        if (slotAcquired) transcodingJobService.releaseSlot();
+        try { Thread.sleep(pollIntervalMillis); } catch (InterruptedException ignored) {}
       }
     }
   }
