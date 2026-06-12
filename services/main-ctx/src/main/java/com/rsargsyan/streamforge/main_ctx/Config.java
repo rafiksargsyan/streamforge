@@ -76,8 +76,17 @@ public class Config {
   @Value("${job.base-output-folder}")
   public String baseOutputFolder;
 
-  @Value("${job.output-url-ttl-hours:24}")
-  public int outputUrlTtlHours;
+  @Value("${job.s3-expiry-seconds:604800}")
+  public long s3ExpirySeconds;
+
+  @Value("${job.retention-seconds:2592000}")
+  public long retentionSeconds;
+
+  @Value("${job.s3-expiry-safety-buffer-seconds:3600}")
+  public long s3ExpirySafetyBufferSeconds;
+
+  @Value("${job.presigned-url-max-seconds:86400}")
+  public long presignedUrlMaxSeconds;
 
   @Value("${job.poll-interval-seconds:5}")
   public int pollIntervalSeconds;
@@ -97,7 +106,6 @@ public class Config {
     return BindingBuilder.bind(queue).to(exchange).with(routingKey);
   }
 
-  @Profile("worker")
   @Bean
   public S3Client s3Client() {
     return S3Client.builder()

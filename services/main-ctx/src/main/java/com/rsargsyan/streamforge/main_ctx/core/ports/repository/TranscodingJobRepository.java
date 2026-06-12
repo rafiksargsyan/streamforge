@@ -37,4 +37,10 @@ public interface TranscodingJobRepository extends JpaRepository<TranscodingJob, 
 
   @Query("SELECT j FROM TranscodingJob j WHERE j.status IN ('RECEIVED', 'IN_PROGRESS') AND j.lastHeartbeatAt < :threshold")
   List<TranscodingJob> findStuckJobs(@Param("threshold") Instant threshold);
+
+  @Query("SELECT j FROM TranscodingJob j WHERE j.status IN ('SUCCESS', 'FAILURE', 'CANCELLED') AND j.s3DeletedAt IS NULL AND j.finishedAt < :threshold")
+  List<TranscodingJob> findJobsForS3Cleanup(@Param("threshold") Instant threshold);
+
+  @Query("SELECT j FROM TranscodingJob j WHERE j.status IN ('SUCCESS', 'FAILURE', 'CANCELLED') AND j.finishedAt < :threshold")
+  List<TranscodingJob> findJobsForDeletion(@Param("threshold") Instant threshold);
 }

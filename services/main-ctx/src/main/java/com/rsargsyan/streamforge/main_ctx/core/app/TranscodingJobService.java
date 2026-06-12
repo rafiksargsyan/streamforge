@@ -24,6 +24,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
@@ -62,6 +64,7 @@ public class TranscodingJobService {
   private final ApplicationEventPublisher applicationEventPublisher;
   private final TranscodingJobRepository transcodingJobRepository;
   private final AccountRepository accountRepository;
+  private final S3Client s3Client;
   private final S3Presigner s3Presigner;
   private final Config config;
   private final TransactionTemplate transactionTemplate;
@@ -71,6 +74,7 @@ public class TranscodingJobService {
   private final ConcurrentHashMap<Long, Process> activeProcesses = new ConcurrentHashMap<>();
   private final ScheduledExecutorService cancellationChecker = Executors.newSingleThreadScheduledExecutor();
   private final ScheduledExecutorService outputFolderCleaner = Executors.newSingleThreadScheduledExecutor();
+  private final ScheduledExecutorService jobCleaner = Executors.newSingleThreadScheduledExecutor();
   private final ExecutorService processingExecutor = Executors.newVirtualThreadPerTaskExecutor();
   private Semaphore processingSemaphore;
 
@@ -79,6 +83,7 @@ public class TranscodingJobService {
       TranscodingJobRepository transcodingJobRepository,
       ApplicationEventPublisher applicationEventPublisher,
       AccountRepository accountRepository,
+      S3Client s3Client,
       @Autowired(required = false) S3Presigner s3Presigner,
       Config config,
       TransactionTemplate transactionTemplate,
@@ -87,6 +92,7 @@ public class TranscodingJobService {
     this.transcodingJobRepository = transcodingJobRepository;
     this.applicationEventPublisher = applicationEventPublisher;
     this.accountRepository = accountRepository;
+    this.s3Client = s3Client;
     this.s3Presigner = s3Presigner;
     this.config = config;
     this.transactionTemplate = transactionTemplate;
@@ -94,6 +100,7 @@ public class TranscodingJobService {
     this.processingSemaphore = new Semaphore(config.processingPoolSize);
     this.cancellationChecker.scheduleAtFixedRate(this::checkCancellations, 3, 3, TimeUnit.SECONDS);
     this.outputFolderCleaner.scheduleAtFixedRate(this::cleanOutputFolder, 1, 1, TimeUnit.HOURS);
+    this.jobCleaner.scheduleAtFixedRate(this::cleanupJobs, 1, 1, TimeUnit.HOURS);
   }
 
   public void acquireSlot() {
@@ -109,12 +116,7 @@ public class TranscodingJobService {
   }
 
   public void submit(String strId, Runnable ack) {
-    try {
-      receive(strId);
-    } catch (Exception e) {
-      processingSemaphore.release();
-      throw e;
-    }
+    receive(strId);
     ack.run();
     Long jobId = TSID.from(strId).toLong();
     startHeartbeat(jobId);
@@ -130,14 +132,14 @@ public class TranscodingJobService {
   public Page<TranscodingJobDTO> findAll(String accountId, int page, int size) {
     var pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
     return transcodingJobRepository.findByAccountId(Util.validateTSID(accountId), pageable)
-        .map(job -> TranscodingJobDTO.from(job, downloadUrl(job)));
+        .map(job -> TranscodingJobDTO.from(job, downloadUrl(job), expiresAt(job)));
   }
 
   public TranscodingJobDTO findById(String accountId, String jobId) {
     var job = transcodingJobRepository
         .findByAccountIdAndId(Util.validateTSID(accountId), Util.validateTSID(jobId))
         .orElseThrow(ResourceNotFoundException::new);
-    return TranscodingJobDTO.from(job, downloadUrl(job));
+    return TranscodingJobDTO.from(job, downloadUrl(job), expiresAt(job));
   }
 
   public long getMaxFileSizeBytes() {
@@ -161,7 +163,7 @@ public class TranscodingJobService {
     var job = new TranscodingJob(account, dto.getVideoURL(), dto.getSpec());
     transcodingJobRepository.save(job);
     applicationEventPublisher.publishEvent(new TranscodingJobCreatedEvent(job.getId()));
-    return TranscodingJobDTO.from(job, null);
+    return TranscodingJobDTO.from(job, null, null);
   }
 
   @Transactional
@@ -170,7 +172,6 @@ public class TranscodingJobService {
         job -> {
           job.receive();
           transcodingJobRepository.save(job);
-          applicationEventPublisher.publishEvent(new TranscodingJobReceivedEvent(job.getId()));
         },
         () -> { throw new ResourceNotFoundException(); }
     );
@@ -181,28 +182,30 @@ public class TranscodingJobService {
     Instant threshold = Instant.now().minusSeconds(config.staleHeartbeatSeconds);
     List<TranscodingJob> stuckJobs = transcodingJobRepository.findStuckJobs(threshold);
     for (TranscodingJob job : stuckJobs) {
-      if (job.getRetryCount() >= config.maxRetries) {
-        log.warn("[{}] Job exceeded max retries ({}), marking as FAILURE", job.getStrId(), config.maxRetries);
-        job.fail(FailureReason.UNKNOWN);
-      } else {
-        log.warn("[{}] Retrying stuck job (attempt {})", job.getStrId(), job.getRetryCount() + 1);
-        Process stuckProcess = activeProcesses.remove(job.getId());
-        if (stuckProcess != null) stuckProcess.destroyForcibly();
-        job.retry();
-        applicationEventPublisher.publishEvent(new TranscodingJobRetryEvent(job.getId()));
-      }
-      transcodingJobRepository.save(job);
+      transactionTemplate.executeWithoutResult(status -> {
+        TranscodingJob j = transcodingJobRepository.findById(job.getId()).orElseThrow();
+        if (j.getRetryCount() >= config.maxRetries) {
+          log.warn("[{}] Job exceeded max retries ({}), marking as FAILURE", j.getStrId(), config.maxRetries);
+          j.fail(FailureReason.UNKNOWN);
+          transcodingJobRepository.save(j);
+        } else {
+          log.warn("[{}] Retrying stuck job (attempt {})", j.getStrId(), j.getRetryCount() + 1);
+          Process stuckProcess = activeProcesses.remove(j.getId());
+          if (stuckProcess != null) stuckProcess.destroyForcibly();
+          j.retry();
+          transcodingJobRepository.save(j);
+          applicationEventPublisher.publishEvent(new TranscodingJobRetryEvent(j.getId()));
+        }
+      });
     }
 
     Instant mqConfirmThreshold = Instant.now().minusSeconds(30);
     for (TranscodingJob job : transcodingJobRepository.findStuckQueuedJobs(mqConfirmThreshold)) {
-      log.warn("[{}] QUEUED job unconfirmed for >30s, resending to RabbitMQ", job.getStrId());
-      try {
+      transactionTemplate.executeWithoutResult(status -> {
+        log.warn("[{}] QUEUED job unconfirmed for >30s, resending to RabbitMQ", job.getStrId());
         transcodingJobRepository.updateMqSent(job.getId(), Instant.now());
         sendToRabbitMq(job.getStrId());
-      } catch (Exception e) {
-        log.warn("[{}] Failed to resend to RabbitMQ: {}", job.getStrId(), e.getMessage());
-      }
+      });
     }
   }
 
@@ -267,7 +270,7 @@ public class TranscodingJobService {
       try {
         zipFile = jobFolder.getParent().resolve(attemptKey + ".zip");
         zipDirectory(jobFolder.resolve("vod"), zipFile);
-        awsS3Upload(zipFile, strId + ".zip", false);
+        awsS3Upload(jobId, zipFile, strId + ".zip", false);
       } catch (Exception e) {
         throw new JobFailureException(FailureReason.UPLOAD_FAILED, e);
       }
@@ -275,6 +278,10 @@ public class TranscodingJobService {
 
       transactionTemplate.executeWithoutResult(status -> {
         var j = transcodingJobRepository.findById(jobId).orElseThrow(ResourceNotFoundException::new);
+        if (j.getStatus() == TranscodingJob.Status.CANCELLED) {
+          log.info("[{}] Job was cancelled during upload, skipping success", strId);
+          return;
+        }
         j.succeed();
         transcodingJobRepository.save(j);
       });
@@ -297,6 +304,11 @@ public class TranscodingJobService {
           final boolean doRetry = retryable;
           transactionTemplate.executeWithoutResult(status -> {
             var j = transcodingJobRepository.findById(jobId).orElseThrow(ResourceNotFoundException::new);
+            if (j.getStatus() != TranscodingJob.Status.IN_PROGRESS) {
+              // retryStuckJobs() already moved this job to a retry cycle — don't double-retry
+              log.info("[{}] Job status is {}, skipping self-retry", strId, j.getStatus());
+              return;
+            }
             if (doRetry && j.getRetryCount() < config.maxRetries) {
               log.warn("[{}] {} failed, scheduling retry (attempt {})", strId, reason, j.getRetryCount() + 1);
               j.retry();
@@ -331,8 +343,11 @@ public class TranscodingJobService {
   private void checkCancellations() {
     if (activeProcesses.isEmpty()) return;
     try {
+      Instant oneDayAgo = Instant.now().minus(Duration.ofDays(1));
       transcodingJobRepository.findAllById(activeProcesses.keySet()).forEach(job -> {
-        if (job.getStatus() == TranscodingJob.Status.CANCELLED) {
+        if (job.getStatus() == TranscodingJob.Status.CANCELLED
+            && job.getFinishedAt() != null
+            && job.getFinishedAt().isAfter(oneDayAgo)) {
           Process process = activeProcesses.get(job.getId());
           if (process != null) {
             log.info("[{}] Cancelling active process", job.getStrId());
@@ -348,16 +363,20 @@ public class TranscodingJobService {
   private void cleanOutputFolder() {
     Path root = Paths.get(config.baseOutputFolder);
     if (!Files.exists(root)) return;
-    Instant cutoff = Instant.now().minus(Duration.ofDays(1));
+    Instant cutoff = Instant.now().minus(Duration.ofDays(2));
     try (var stream = Files.list(root)) {
-      stream.filter(Files::isDirectory).forEach(dir -> {
+      stream.forEach(entry -> {
         try {
-          if (Files.getLastModifiedTime(dir).toInstant().isBefore(cutoff)) {
-            deleteRecursively(dir);
-            log.info("Cleaned up stale output folder: {}", dir.getFileName());
+          if (Files.getLastModifiedTime(entry).toInstant().isBefore(cutoff)) {
+            if (Files.isDirectory(entry)) {
+              deleteRecursively(entry);
+            } else {
+              Files.delete(entry);
+            }
+            log.info("Cleaned up stale output file: {}", entry.getFileName());
           }
         } catch (Exception e) {
-          log.warn("Failed to clean output folder {}: {}", dir.getFileName(), e.getMessage());
+          log.warn("Failed to clean output file {}: {}", entry.getFileName(), e.getMessage());
         }
       });
     } catch (Exception e) {
@@ -419,7 +438,7 @@ public class TranscodingJobService {
     }
   }
 
-  private void awsS3Upload(Path source, String s3Key, boolean recursive) throws Exception {
+  private void awsS3Upload(Long jobId, Path source, String s3Key, boolean recursive) throws Exception {
     ProcessBuilder pb = new ProcessBuilder(
         "aws", "s3", "cp",
         source.toString(),
@@ -433,25 +452,83 @@ public class TranscodingJobService {
     pb.environment().put("AWS_SECRET_ACCESS_KEY", config.s3SecretAccessKey);
     pb.environment().put("AWS_DEFAULT_REGION", config.s3Region);
     pb.inheritIO();
-    int exitCode = pb.start().waitFor();
+    Process process = pb.start();
+    activeProcesses.put(jobId, process);
+    int exitCode;
+    try {
+      exitCode = process.waitFor();
+    } finally {
+      activeProcesses.remove(jobId);
+    }
     if (exitCode != 0) {
       throw new RuntimeException("aws s3 cp failed with exit code " + exitCode);
     }
   }
 
-  private String downloadUrl(TranscodingJob job) {
+  private Instant expiresAt(TranscodingJob job) {
     if (job.getStatus() != TranscodingJob.Status.SUCCESS) return null;
-    Instant expiry = job.getFinishedAt().plus(Duration.ofHours(config.outputUrlTtlHours));
+    if (job.getS3DeletedAt() != null) return null;
+    return job.getFinishedAt()
+        .plus(Duration.ofSeconds(config.s3ExpirySeconds))
+        .minus(Duration.ofSeconds(config.s3ExpirySafetyBufferSeconds));
+  }
+
+  private String downloadUrl(TranscodingJob job) {
+    Instant exp = expiresAt(job);
+    if (exp == null) return null;
     Instant now = Instant.now();
-    if (!now.isBefore(expiry)) return null;
+    if (!now.isBefore(exp)) return null;
+    Duration remaining = Duration.between(now, exp);
+    Duration presignedUrlMax = Duration.ofSeconds(config.presignedUrlMaxSeconds);
+    Duration urlTtl = remaining.compareTo(presignedUrlMax) < 0 ? remaining : presignedUrlMax;
     var presignRequest = GetObjectPresignRequest.builder()
-        .signatureDuration(Duration.between(now, expiry))
+        .signatureDuration(urlTtl)
         .getObjectRequest(GetObjectRequest.builder()
             .bucket(config.s3Bucket)
             .key(job.getStrId() + ".zip")
             .build())
         .build();
     return s3Presigner.presignGetObject(presignRequest).url().toString();
+  }
+
+  private void cleanupJobs() {
+    try {
+      Instant s3ExpiryThreshold = Instant.now().minus(Duration.ofSeconds(config.s3ExpirySeconds));
+      for (TranscodingJob job : transcodingJobRepository.findJobsForS3Cleanup(s3ExpiryThreshold)) {
+        try {
+          deleteS3Object(job.getStrId() + ".zip");
+          transactionTemplate.executeWithoutResult(status ->
+              transcodingJobRepository.findById(job.getId()).ifPresent(j -> {
+                j.markS3Deleted();
+                transcodingJobRepository.save(j);
+              })
+          );
+          log.info("[{}] S3 object deleted", job.getStrId());
+        } catch (Exception e) {
+          log.warn("[{}] Failed to delete S3 object: {}", job.getStrId(), e.getMessage());
+        }
+      }
+    } catch (Exception e) {
+      log.warn("S3 cleanup failed: {}", e.getMessage());
+    }
+
+    try {
+      Instant retentionThreshold = Instant.now().minus(Duration.ofSeconds(config.retentionSeconds));
+      List<TranscodingJob> jobsToDelete = transcodingJobRepository.findJobsForDeletion(retentionThreshold);
+      if (!jobsToDelete.isEmpty()) {
+        transcodingJobRepository.deleteAll(jobsToDelete);
+        log.info("Deleted {} expired jobs", jobsToDelete.size());
+      }
+    } catch (Exception e) {
+      log.warn("Job deletion failed: {}", e.getMessage());
+    }
+  }
+
+  private void deleteS3Object(String key) {
+    s3Client.deleteObject(DeleteObjectRequest.builder()
+        .bucket(config.s3Bucket)
+        .key(key)
+        .build());
   }
 
   private static void zipDirectory(Path source, Path target) throws IOException {

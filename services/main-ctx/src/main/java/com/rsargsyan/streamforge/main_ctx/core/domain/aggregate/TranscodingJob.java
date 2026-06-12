@@ -41,6 +41,8 @@ public class TranscodingJob extends AccountScopedAggregateRoot {
 
   private int retryCount;
 
+  private Instant s3DeletedAt;
+
   @SuppressWarnings("unused")
   TranscodingJob() {}
 
@@ -114,6 +116,10 @@ public class TranscodingJob extends AccountScopedAggregateRoot {
     this.failureReason = reason;
     this.finishedAt = Instant.now();
     touch();
+  }
+
+  public void markS3Deleted() {
+    this.s3DeletedAt = Instant.now();
   }
 
   public void cancel() {

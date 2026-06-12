@@ -89,20 +89,20 @@ public class VideoTranscoder {
                                                    int ffmpegThreads,
                                                    Consumer<Process> onProcess) throws Exception {
     int n = renditions.size();
-    int encoderThreads = Math.max(3, (ffmpegThreads - 1) / n);
+    int baseThreads = (ffmpegThreads - 1) / n;
 
     List<String> cmd = new ArrayList<>();
-    cmd.addAll(List.of("ffmpeg", "-y", "-threads", "1", "-i", inputPath));
+    cmd.addAll(List.of("ffmpeg", "-y", "-i", inputPath));
 
     // Build filter_complex: optionally tonemap (HDR), then split and scale per rendition
     StringBuilder fc = new StringBuilder();
     if (hdr) {
-      fc.append("[0:v:").append(stream).append("]")
+      fc.append("[0:").append(stream).append("]")
         .append("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,")
         .append("tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv[sdr_base];")
         .append("[sdr_base]");
     } else {
-      fc.append("[0:v:").append(stream).append("]");
+      fc.append("[0:").append(stream).append("]");
     }
     fc.append("split=").append(n);
     for (int i = 0; i < n; i++) fc.append("[v").append(i).append("]");
@@ -131,6 +131,9 @@ public class VideoTranscoder {
       } else {
         level = "5.1"; profile = "high";     crf = 19; maxRate = "20000k"; bufSize = "40000k"; preset = "fast";
       }
+
+      int minThreads = resolution <= 480 ? 2 : resolution <= 720 ? 3 : 4;
+      int encoderThreads = Math.max(minThreads, baseThreads);
 
       cmd.addAll(List.of(
           "-map", "[out" + i + "]",

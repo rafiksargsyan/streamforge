@@ -7,7 +7,9 @@ import {
   TableBody,
   TableCell,
   TableContainer,
+  TableFooter,
   TableHead,
+  TablePagination,
   TableRow,
   Paper,
   IconButton,
@@ -19,7 +21,6 @@ import {
   Alert,
   Chip,
   CircularProgress,
-  Pagination,
   Select,
   MenuItem,
   FormControl,
@@ -30,6 +31,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import CancelIcon from '@mui/icons-material/Cancel';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/Delete';
 import LinkIcon from '@mui/icons-material/Link';
 import { useAuth } from '../hooks/useAuth';
@@ -51,7 +53,8 @@ const LANGS: Lang[] = [
   'BE', 'HY', 'MK', 'NB', 'SL',
 ];
 
-const PAGE_SIZE = 10;
+const fmt = (ts: string | null | undefined) =>
+  ts ? new Date(ts).toLocaleString() : '—';
 
 const STATUS_COLOR: Record<JobStatus, 'default' | 'info' | 'warning' | 'success' | 'error'> = {
   SUBMITTED: 'info',
@@ -69,8 +72,9 @@ const TERMINAL: JobStatus[] = ['SUCCESS', 'FAILURE', 'CANCELLED'];
 export function Jobs() {
   const { user, accountId } = useAuth();
   const [jobs, setJobs] = useState<TranscodingJobDTO[]>([]);
-  const [totalPages, setTotalPages] = useState(0);
-  const [page, setPage] = useState(1);
+  const [totalElements, setTotalElements] = useState(0);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -91,19 +95,41 @@ export function Jobs() {
   const [cancelTarget, setCancelTarget] = useState<TranscodingJobDTO | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyUrl = (jobId: string, url: string) => {
+    const fallback = (text: string) => {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.position = 'fixed';
+      el.style.opacity = '0';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    };
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).catch(() => fallback(url));
+    } else {
+      fallback(url);
+    }
+    setCopiedId(jobId);
+    setTimeout(() => setCopiedId(null), 1500);
+  };
+
   const load = useCallback(async () => {
     if (!user || !accountId) return;
     setLoading(true);
     try {
-      const result = await listJobs(user, accountId, page - 1, PAGE_SIZE);
+      const result = await listJobs(user, accountId, page, rowsPerPage);
       setJobs(result.content);
-      setTotalPages(result.totalPages);
+      setTotalElements(result.page.totalElements);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [user, accountId, page]);
+  }, [user, accountId, page, rowsPerPage]);
 
   useEffect(() => {
     load();
@@ -127,7 +153,7 @@ export function Jobs() {
       });
       setCreateOpen(false);
       resetCreateForm();
-      setPage(1);
+      setPage(0);
       await load();
     } catch (err) {
       setError(String(err));
@@ -215,6 +241,9 @@ export function Jobs() {
                   <TableCell>Video URL</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Created</TableCell>
+                  <TableCell>Started</TableCell>
+                  <TableCell>Finished</TableCell>
+                  <TableCell>Expires</TableCell>
                   <TableCell>Output</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
@@ -222,7 +251,7 @@ export function Jobs() {
               <TableBody>
                 {jobs.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} align="center">
+                    <TableCell colSpan={9} align="center">
                       <Typography variant="body2" color="text.secondary" py={2}>
                         No jobs yet.
                       </Typography>
@@ -231,20 +260,22 @@ export function Jobs() {
                 )}
                 {jobs.map((job) => (
                   <TableRow key={job.id}>
-                    <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>
-                      {job.id.slice(0, 8)}…
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>
+                      {job.id}
                     </TableCell>
-                    <TableCell
-                      sx={{
-                        maxWidth: 200,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      <Tooltip title={job.videoUrl}>
-                        <span>{job.videoUrl}</span>
-                      </Tooltip>
+                    <TableCell sx={{ maxWidth: 220 }}>
+                      <Stack direction="row" alignItems="center" spacing={0.5}>
+                        <Tooltip title={job.videoUrl}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', minWidth: 0 }}>
+                            {job.videoUrl}
+                          </span>
+                        </Tooltip>
+                        <Tooltip title={copiedId === job.id ? 'Copied!' : 'Copy URL'}>
+                          <IconButton size="small" onClick={() => copyUrl(job.id, job.videoUrl)}>
+                            <ContentCopyIcon sx={{ fontSize: 14 }} />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -253,7 +284,10 @@ export function Jobs() {
                         size="small"
                       />
                     </TableCell>
-                    <TableCell>{new Date(job.createdAt).toLocaleString()}</TableCell>
+                    <TableCell><Typography variant="body2" color="text.secondary" noWrap>{fmt(job.createdAt)}</Typography></TableCell>
+                    <TableCell><Typography variant="body2" color="text.secondary" noWrap>{fmt(job.startedAt)}</Typography></TableCell>
+                    <TableCell><Typography variant="body2" color="text.secondary" noWrap>{fmt(job.finishedAt)}</Typography></TableCell>
+                    <TableCell><Typography variant="body2" color="text.secondary" noWrap>{fmt(job.expiresAt)}</Typography></TableCell>
                     <TableCell>
                       {job.downloadUrl && (
                         <Tooltip title="Download output ZIP">
@@ -285,18 +319,20 @@ export function Jobs() {
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TablePagination
+                    count={totalElements}
+                    page={page}
+                    rowsPerPage={rowsPerPage}
+                    rowsPerPageOptions={[10, 25, 50]}
+                    onPageChange={(_, newPage) => setPage(newPage)}
+                    onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+                  />
+                </TableRow>
+              </TableFooter>
             </Table>
           </TableContainer>
-
-          {totalPages > 1 && (
-            <Box display="flex" justifyContent="center" mt={2}>
-              <Pagination
-                count={totalPages}
-                page={page}
-                onChange={(_, v) => setPage(v)}
-              />
-            </Box>
-          )}
         </>
       )}
 
@@ -480,7 +516,7 @@ export function Jobs() {
         <DialogTitle>Cancel Job</DialogTitle>
         <DialogContent>
           <Typography variant="body2">
-            Cancel job <strong>{cancelTarget?.id.slice(0, 8)}…</strong>?
+            Cancel job <strong>{cancelTarget?.id}</strong>?
           </Typography>
         </DialogContent>
         <DialogActions>

@@ -71,6 +71,7 @@ export interface TranscodingJobDTO {
   startedAt?: string;
   finishedAt?: string;
   downloadUrl?: string;
+  expiresAt?: string;
   failureReason?: string;
 }
 
@@ -85,8 +86,10 @@ export interface JobLimitsDTO {
 
 export interface PageResponse<T> {
   content: T[];
-  totalElements: number;
-  totalPages: number;
-  number: number;
-  size: number;
+  page: {
+    totalElements: number;
+    totalPages: number;
+    number: number;
+    size: number;
+  };
 }
