@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,8 +38,7 @@ public class AuthService {
     if (apiKeyFromDBOpt.isEmpty()) return null;
     ApiKey apiKeyFromDB = apiKeyFromDBOpt.get();
     UserProfile userProfile = apiKeyFromDB.getUserProfile();
-    apiKeyFromDB.accessed();
-    apiKeyRepository.save(apiKeyFromDB);
+    apiKeyRepository.updateLastAccessTime(apiKeyFromDB.getId(), Instant.now());
     return UserContext.builder().userProfileId(userProfile.getStrId())
         .accountId(userProfile.getAccount().getStrId())
         .externalId(userProfile.getPrincipal().getExternalId()).build();
