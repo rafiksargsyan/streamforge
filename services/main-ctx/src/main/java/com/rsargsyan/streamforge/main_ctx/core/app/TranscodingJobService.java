@@ -122,10 +122,12 @@ public class TranscodingJobService {
     } catch (ResourceNotFoundException | IllegalJobStateTransitionException e) {
       log.warn("[{}] Discarding message, job not receivable: {}", strId, e.getMessage());
       ack.run();
+      releaseSlot();
       return;
     } catch (Exception e) {
       log.warn("[{}] Failed to receive job, requeueing: {}", strId, e.getMessage());
       nack.run();
+      releaseSlot();
       return;
     }
     ack.run();
