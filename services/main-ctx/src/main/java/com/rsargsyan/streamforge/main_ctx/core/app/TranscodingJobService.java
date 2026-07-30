@@ -6,6 +6,7 @@ import com.rsargsyan.streamforge.main_ctx.core.app.dto.TranscodingJobCreationDTO
 import com.rsargsyan.streamforge.main_ctx.core.app.dto.TranscodingJobDTO;
 import com.rsargsyan.streamforge.main_ctx.core.domain.aggregate.TranscodingJob;
 import com.rsargsyan.streamforge.main_ctx.core.domain.valueobject.FailureReason;
+import com.rsargsyan.streamforge.main_ctx.core.exception.IllegalJobStateTransitionException;
 import com.rsargsyan.streamforge.main_ctx.core.exception.ResourceNotFoundException;
 import com.rsargsyan.streamforge.main_ctx.core.exception.VideoFileTooLargeException;
 import com.rsargsyan.streamforge.main_ctx.core.exception.VideoNotAccessibleException;
@@ -115,8 +116,18 @@ public class TranscodingJobService {
     processingSemaphore.release();
   }
 
-  public void submit(String strId, Runnable ack) {
-    receive(strId);
+  public void submit(String strId, Runnable ack, Runnable nack) {
+    try {
+      receive(strId);
+    } catch (ResourceNotFoundException | IllegalJobStateTransitionException e) {
+      log.warn("[{}] Discarding message, job not receivable: {}", strId, e.getMessage());
+      ack.run();
+      return;
+    } catch (Exception e) {
+      log.warn("[{}] Failed to receive job, requeueing: {}", strId, e.getMessage());
+      nack.run();
+      return;
+    }
     ack.run();
     Long jobId = TSID.from(strId).toLong();
     startHeartbeat(jobId);

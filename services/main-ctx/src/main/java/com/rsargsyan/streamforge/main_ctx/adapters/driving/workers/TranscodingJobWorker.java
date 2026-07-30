@@ -67,6 +67,12 @@ public class TranscodingJobWorker {
             } catch (Exception e) {
               log.warn("[{}] Failed to ACK message", strId, e);
             }
+          }, () -> {
+            try {
+              channel.basicNack(deliveryTag, false, true);
+            } catch (Exception e) {
+              log.warn("[{}] Failed to NACK message", strId, e);
+            }
           });
           return true;
         });
