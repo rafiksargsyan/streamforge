@@ -125,9 +125,9 @@ public class VideoTranscoder {
       } else if (resolution <= 480) {
         level = "3.1"; profile = "main";     crf = 18; maxRate = "1200k";  bufSize = "2400k";  preset = "fast";
       } else if (resolution <= 720) {
-        level = "4.0"; profile = "main";     crf = 18; maxRate = "3000k";  bufSize = "6000k";  preset = "medium";
+        level = "4.0"; profile = "main";     crf = 18; maxRate = "4000k";  bufSize = "8000k";  preset = "medium";
       } else if (resolution <= 1080) {
-        level = "4.2"; profile = "high";     crf = 19; maxRate = "5000k";  bufSize = "10000k"; preset = "medium";
+        level = "4.2"; profile = "high";     crf = 19; maxRate = "6500k";  bufSize = "13000k"; preset = "medium";
       } else {
         level = "5.1"; profile = "high";     crf = 19; maxRate = "20000k"; bufSize = "40000k"; preset = "fast";
       }
