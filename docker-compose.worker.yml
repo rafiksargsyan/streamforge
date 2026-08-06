@@ -5,6 +5,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "minio.local:host-gateway"
+    volumes:
+      - streamforge-tmp:/tmp/streamforge
     environment:
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-postgres}
@@ -28,3 +30,5 @@ services:
       JOB_RETENTION_SECONDS: ${JOB_RETENTION_SECONDS:-604800}
       S3_BUCKET: ${S3_BUCKET:-streamforge}
 
+volumes:
+  streamforge-tmp:
