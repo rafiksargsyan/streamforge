@@ -18,7 +18,7 @@ import java.util.function.Consumer;
 @Slf4j
 public class VideoTranscoder {
 
-  public static void transcode(String inputPath, Path outputFolder, TranscodeSpec spec,
+  public static List<Integer> transcode(String inputPath, Path outputFolder, TranscodeSpec spec,
                                int ffmpegThreads, Consumer<Process> onProcess) throws Exception {
     Path workDir = outputFolder.resolve("work");
     Files.createDirectories(workDir);
@@ -26,6 +26,8 @@ public class VideoTranscoder {
     Files.createDirectories(vodDir);
     Path subtitlesDir = outputFolder.resolve("subtitles");
     Files.createDirectories(subtitlesDir);
+    Path validationDir = workDir.resolve("subtitle-validation");
+    Files.createDirectories(validationDir);
 
     boolean hdr = isHdr(inputPath);
     List<String> shakaInputs = new ArrayList<>();
@@ -49,16 +51,31 @@ public class VideoTranscoder {
     }
 
     // 3. Process subtitle tracks (WebVTT)
-    for (TextTranscodeSpec textSpec : spec.texts()) {
+    List<Integer> failedSubtitleIndexes = new ArrayList<>();
+    List<TextTranscodeSpec> texts = spec.texts();
+    for (int i = 0; i < texts.size(); i++) {
+      TextTranscodeSpec textSpec = texts.get(i);
       Path subtitleWorkPath = workDir.resolve(textSpec.fileName());
       transcodeSubtitle(textSpec, inputPath, subtitleWorkPath, onProcess);
       appendDummyCue(subtitleWorkPath);
-      Files.copy(subtitleWorkPath, subtitlesDir.resolve(textSpec.fileName()),
-          java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-      shakaInputs.add("in=%s,stream=text,output=%s,lang=%s,hls_group_id=subtitle,hls_name='%s',dash_label='%s'".formatted(
-          subtitleWorkPath, textSpec.fileName(),
-          textSpec.lang().name().toLowerCase(),
-          textSpec.name(), textSpec.name()));
+
+      // Shaka Packager's WebVTT parser is far stricter than ffmpeg's own - ffmpeg's source
+      // subtitle -> WebVTT conversion can produce structurally invalid WebVTT (e.g. blank
+      // lines mid-cue from \N-as-spacing typesetting tricks in the source) that ffmpeg itself
+      // reads back without complaint. Running this exact file solo through packager - the same
+      // parser step 4 below uses - catches that before committing to the one full packaging run
+      // covering every rendition, so one bad subtitle track doesn't fail the whole multi-hour job.
+      if (isValidWebVtt(subtitleWorkPath, validationDir, textSpec.fileName())) {
+        Files.copy(subtitleWorkPath, subtitlesDir.resolve(textSpec.fileName()),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        shakaInputs.add("in=%s,stream=text,output=%s,lang=%s,hls_group_id=subtitle,hls_name='%s',dash_label='%s'".formatted(
+            subtitleWorkPath, textSpec.fileName(),
+            textSpec.lang().name().toLowerCase(),
+            textSpec.name(), textSpec.name()));
+      } else {
+        log.warn("Subtitle track {} (index {}) failed WebVTT validation, dropping from packaging", textSpec.fileName(), i);
+        failedSubtitleIndexes.add(i);
+      }
     }
 
     // 4. Package with Shaka Packager (CWD = vod/, so segment files land there)
@@ -78,9 +95,30 @@ public class VideoTranscoder {
     // 5. Strip shaka-packager comment lines injected by the packager
     stripShakaComments(vodDir, "*.mpd");
     stripShakaComments(vodDir, "*.m3u8");
-    if (!spec.texts().isEmpty()) {
+    if (failedSubtitleIndexes.size() < texts.size()) {
       stripShakaComments(vodDir, "*.vtt");
     }
+
+    return failedSubtitleIndexes;
+  }
+
+  /** Runs the exact subtitle file solo through Shaka Packager - the same WebVTT parser used by
+   * the real packaging call above - without any manifest output, purely to see whether packager
+   * accepts it. Cheap: subtitle files are KB, not GB, so this costs milliseconds per track. */
+  private static boolean isValidWebVtt(Path vttPath, Path validationDir, String fileName) throws Exception {
+    Path throwawayOutput = validationDir.resolve(fileName);
+    List<String> cmd = List.of("packager",
+        "in=%s,stream=text,output=%s".formatted(vttPath, throwawayOutput));
+    ProcessBuilder pb = new ProcessBuilder(cmd);
+    pb.redirectErrorStream(true);
+    Process process = pb.start();
+    String output = new String(process.getInputStream().readAllBytes());
+    int exit = process.waitFor();
+    if (exit != 0) {
+      log.warn("WebVTT validation failed for {}: {}", vttPath, output.trim());
+      return false;
+    }
+    return true;
   }
 
   private static void transcodeAllVideoRenditions(String inputPath, int stream,

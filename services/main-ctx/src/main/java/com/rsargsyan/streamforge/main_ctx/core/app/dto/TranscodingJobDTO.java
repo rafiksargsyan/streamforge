@@ -7,6 +7,7 @@ import org.springframework.lang.Nullable;
 
 import java.net.URL;
 import java.time.Instant;
+import java.util.List;
 
 @Value
 public class TranscodingJobDTO {
@@ -20,6 +21,9 @@ public class TranscodingJobDTO {
   @Nullable String downloadUrl;
   @Nullable Instant expiresAt;
   @Nullable JobFailureReason failureReason;
+  // Positions within spec.texts() that Shaka Packager rejected as invalid WebVTT and were
+  // dropped from packaging - consumers should treat these text tracks as not existing.
+  List<Integer> failedSubtitleIndexes;
 
   public static TranscodingJobDTO from(TranscodingJob job, String downloadUrl, @Nullable Instant expiresAt) {
     JobFailureReason failureReason = job.getFailureReason() != null
@@ -28,7 +32,7 @@ public class TranscodingJobDTO {
     return new TranscodingJobDTO(
         job.getStrId(), job.getVideoURL(), externalStatus(job), job.getSpec(),
         job.getCreatedAt(), job.getStartedAt(), job.getFinishedAt(),
-        downloadUrl, expiresAt, failureReason
+        downloadUrl, expiresAt, failureReason, job.getFailedSubtitleIndexes()
     );
   }
 

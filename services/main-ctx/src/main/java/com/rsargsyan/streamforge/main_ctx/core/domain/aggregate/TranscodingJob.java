@@ -15,6 +15,7 @@ import org.hibernate.annotations.Type;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.time.Instant;
+import java.util.List;
 
 @Entity
 @Getter
@@ -32,6 +33,13 @@ public class TranscodingJob extends AccountScopedAggregateRoot {
 
   @Enumerated(EnumType.STRING)
   private FailureReason failureReason;
+
+  // Positions within spec.texts() that Shaka Packager's WebVTT parser rejected and that were
+  // therefore dropped from packaging rather than failing the whole job - consumers (q62) use
+  // this to know a given subtitle index doesn't actually exist for this rendition.
+  @Type(JsonType.class)
+  @Column(columnDefinition = "jsonb", name = "failed_subtitle_indexes")
+  private List<Integer> failedSubtitleIndexes = List.of();
 
   private Instant startedAt;
   private Instant finishedAt;
@@ -102,12 +110,13 @@ public class TranscodingJob extends AccountScopedAggregateRoot {
     this.mqConfirmedAt = null;
   }
 
-  public void succeed() {
+  public void succeed(List<Integer> failedSubtitleIndexes) {
     if (this.status != Status.IN_PROGRESS) {
       throw new IllegalJobStateTransitionException(this.status, Status.SUCCESS);
     }
     this.status = Status.SUCCESS;
     this.finishedAt = Instant.now();
+    this.failedSubtitleIndexes = failedSubtitleIndexes != null ? List.copyOf(failedSubtitleIndexes) : List.of();
     touch();
   }
 

@@ -270,11 +270,16 @@ public class TranscodingJobService {
 
       log.info("[{}] Starting transcoding", strId);
       long transcodeT = System.nanoTime();
+      List<Integer> failedSubtitleIndexes;
       try {
-        VideoTranscoder.transcode(videoFile.toString(), jobFolder, job.getSpec(),
+        failedSubtitleIndexes = VideoTranscoder.transcode(videoFile.toString(), jobFolder, job.getSpec(),
             config.ffmpegThreads, p -> activeProcesses.put(jobId, p));
       } catch (Exception e) {
         throw new JobFailureException(FailureReason.PROCESSING_FAILED, e);
+      }
+      if (!failedSubtitleIndexes.isEmpty()) {
+        log.warn("[{}] {} subtitle track(s) failed WebVTT validation and were dropped: {}",
+            strId, failedSubtitleIndexes.size(), failedSubtitleIndexes);
       }
       log.info("[{}] Transcoding: {}s", strId, elapsed(transcodeT));
 
@@ -295,7 +300,7 @@ public class TranscodingJobService {
           log.info("[{}] Job was cancelled during upload, skipping success", strId);
           return;
         }
-        j.succeed();
+        j.succeed(failedSubtitleIndexes);
         transcodingJobRepository.save(j);
       });
 

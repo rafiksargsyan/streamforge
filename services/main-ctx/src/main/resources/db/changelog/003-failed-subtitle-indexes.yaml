@@ -1,0 +1,13 @@
+databaseChangeLog:
+  - changeSet:
+      id: 003-failed-subtitle-indexes
+      author: rsargsyan
+      preConditions:
+        - onFail: MARK_RAN
+          not:
+            - columnExists:
+                tableName: transcoding_job
+                columnName: failed_subtitle_indexes
+      changes:
+        - sql:
+            sql: ALTER TABLE transcoding_job ADD COLUMN failed_subtitle_indexes JSONB NOT NULL DEFAULT '[]'::jsonb;
